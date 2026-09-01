@@ -1,1 +1,13 @@
-{"name":"axion-core","version":"0.1.0","private":true,"type":"module","scripts":{"test":"node --test","demo":"node src/demo.js"}}
+{
+  "name": "axion",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node src/server.js",
+    "test": "node --test",
+    "check": "node --check src/store.js && node --check src/auth.js && node --check src/signing.js && node --check src/service.js && node --check src/http-app.js && node --check src/server.js && npm test"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": { "better-sqlite3": "^11.8.1" }
+}
