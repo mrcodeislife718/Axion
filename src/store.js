@@ -27,15 +27,17 @@ export class AxionStore {
       create table if not exists api_keys(id text primary key,organization_id text not null,label text not null,secret_hash text not null,scopes_json text not null,status text not null,created_at text not null,expires_at text,revoked_at text,last_used_at text,foreign key(organization_id) references organizations(id));
       create table if not exists identity_owners(identity_id text primary key,organization_id text not null,created_at text not null,foreign key(organization_id) references organizations(id));
       create table if not exists provider_sessions(id text primary key,identity_id text not null,organization_id text not null,provider text not null,model text,external_session_id text,status text not null,started_at text not null,ended_at text,metadata_json text not null);
-      create table if not exists qualifications(id text primary key,identity_id text not null,organization_id text not null,kind text not null,status text not null,score real,evidence_json text not null,recorded_at text not null,expires_at text,revoked_at text);
+      create table if not exists qualifications(id text primary key,identity_id text not null,organization_id text not null,kind text not null,status text not null,score real,evidence_json text not null,recorded_at text not null,expires_at text,revoked_at text,release_version text,release_digest text,evaluator_id text,methodology text);
       create table if not exists security_audit(id text primary key,organization_id text,event_type text not null,principal_key_id text,payload_json text not null,created_at text not null);
       create index if not exists idx_api_keys_org on api_keys(organization_id,status);
       create index if not exists idx_provider_identity on provider_sessions(identity_id,started_at);
       create index if not exists idx_qual_identity on qualifications(identity_id,recorded_at);
+      create index if not exists idx_qual_release on qualifications(identity_id,release_version,release_digest,status);
     `);
-    if (!this.db.prepare('select 1 from schema_migrations where version=1').get()) {
-      this.db.prepare('insert into schema_migrations(version,name,applied_at) values(1,?,?)').run('durable_identity_store', now());
-    }
+    if (!this.db.prepare('select 1 from schema_migrations where version=1').get()) this.db.prepare('insert into schema_migrations(version,name,applied_at) values(1,?,?)').run('durable_identity_store', now());
+    const cols = this.db.prepare('pragma table_info(qualifications)').all().map(row=>row.name);
+    for (const [name,type] of [['release_version','text'],['release_digest','text'],['evaluator_id','text'],['methodology','text']]) if (!cols.includes(name)) this.db.exec(`alter table qualifications add column ${name} ${type}`);
+    if (!this.db.prepare('select 1 from schema_migrations where version=2').get()) this.db.prepare('insert into schema_migrations(version,name,applied_at) values(2,?,?)').run('release_bound_qualifications', now());
   }
 
   loadSnapshot() { const row = this.db.prepare('select snapshot_json from registry_state where id=1').get(); return row ? JSON.parse(row.snapshot_json) : null; }
@@ -81,11 +83,12 @@ export class AxionStore {
   }
   providerSessions(identityId, organizationId) { return this.db.prepare('select * from provider_sessions where identity_id=? and organization_id=? order by started_at desc').all(identityId, organizationId).map(row => ({ ...row, metadata: JSON.parse(row.metadata_json) })); }
 
-  recordQualification({ identityId, organizationId, kind, status, score = null, evidence = [], expiresAt = null }) {
+  recordQualification({ identityId, organizationId, kind, status, score = null, evidence = [], expiresAt = null, releaseVersion = null, releaseDigest = null, evaluatorId = null, methodology = null }) {
     if (!['qualified','unverified','failed','revoked'].includes(status)) throw new Error('invalid qualification status');
     if (score != null && (!Number.isFinite(score) || score < 0 || score > 1)) throw new Error('qualification score must be between 0 and 1');
-    const row = { id: id('qualification'), identity_id: identityId, organization_id: organizationId, kind, status, score, evidence_json: JSON.stringify(evidence), recorded_at: now(), expires_at: expiresAt };
-    this.db.prepare('insert into qualifications(id,identity_id,organization_id,kind,status,score,evidence_json,recorded_at,expires_at) values(@id,@identity_id,@organization_id,@kind,@status,@score,@evidence_json,@recorded_at,@expires_at)').run(row);
+    if (status === 'qualified' && (!releaseVersion || !releaseDigest || !evaluatorId)) throw new Error('qualified evidence must bind release version, release digest, and evaluator');
+    const row = { id: id('qualification'), identity_id: identityId, organization_id: organizationId, kind, status, score, evidence_json: JSON.stringify(evidence), recorded_at: now(), expires_at: expiresAt, release_version:releaseVersion, release_digest:releaseDigest, evaluator_id:evaluatorId, methodology };
+    this.db.prepare('insert into qualifications(id,identity_id,organization_id,kind,status,score,evidence_json,recorded_at,expires_at,release_version,release_digest,evaluator_id,methodology) values(@id,@identity_id,@organization_id,@kind,@status,@score,@evidence_json,@recorded_at,@expires_at,@release_version,@release_digest,@evaluator_id,@methodology)').run(row);
     return { ...row, evidence };
   }
   revokeQualification(qualificationId, organizationId) { this.db.prepare("update qualifications set status='revoked',revoked_at=? where id=? and organization_id=?").run(now(), qualificationId, organizationId); }
