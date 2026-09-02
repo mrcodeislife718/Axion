@@ -6,7 +6,7 @@
   "scripts": {
     "start": "node src/server.js",
     "test": "node --test",
-    "check": "node --check src/store.js && node --check src/auth.js && node --check src/signing.js && node --check src/standard.js && node --check src/transparency-ledger.js && node --check src/service.js && node --check src/http-app.js && node --check src/server.js && npm test"
+    "check": "node --check src/store.js && node --check src/auth.js && node --check src/signing.js && node --check src/standard.js && node --check src/transparency-ledger.js && node --check src/trust-bundle.js && node --check src/service.js && node --check src/http-app.js && node --check src/server.js && npm test"
   },
   "engines": { "node": ">=22" },
   "dependencies": { "better-sqlite3": "^11.8.1" }
