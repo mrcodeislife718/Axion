@@ -17,7 +17,7 @@ export function validateManifest(manifest) {
   if (!manifest || typeof manifest !== 'object') return { valid: false, errors: ['manifest must be an object'] };
   if (manifest.axion_version !== '1.0') errors.push('axion_version must equal 1.0');
   const identity = manifest.identity ?? {};
-  if (!/^axion:[a-z0-9-]+:[a-z0-9._-]+$/i.test(identity.id ?? '')) errors.push('identity.id is invalid');
+  if (!/^axion:[a-z0-9-]+:[a-z0-9._/-]+$/i.test(identity.id ?? '') || String(identity.id ?? '').includes('//') || String(identity.id ?? '').includes('/../') || String(identity.id ?? '').endsWith('/..')) errors.push('identity.id is invalid');
   if (!identity.name?.trim()) errors.push('identity.name is required');
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(identity.version ?? '')) errors.push('identity.version must be semantic');
   if (!identity.publisher?.trim()) errors.push('identity.publisher is required');
