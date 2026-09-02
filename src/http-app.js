@@ -14,6 +14,14 @@ export function createAxionHandler({ service = new AxionService().initialize(), 
       if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, service: 'axion', ledger:service.ledgerStatus() });
       if (req.method === 'GET' && url.pathname === '/v1/public/keys') return sendJson(res, 200, { keys: service.signingKeys() });
       if (req.method === 'GET' && url.pathname === '/v1/public/transparency/checkpoint') return sendJson(res, 200, service.ledgerCheckpoint());
+      if (req.method === 'GET' && url.pathname === '/v1/public/trust-bundle') {
+        const limit=publicRateLimiter.check(ip(req)); if(!limit.allowed)return sendJson(res,429,{error:'rate_limited'});
+        return sendJson(res,200,service.trustBundle());
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/public/trust-bundles/verify') {
+        const limit=publicRateLimiter.check(ip(req)); if(!limit.allowed)return sendJson(res,429,{error:'rate_limited'});
+        const body=await readJson(req); return sendJson(res,200,service.verifyTrustBundle(body.bundle || body,body.policy || {}));
+      }
       if (req.method === 'POST' && url.pathname === '/v1/public/conformance/validate') {
         const limit=publicRateLimiter.check(ip(req)); if(!limit.allowed)return sendJson(res,429,{error:'rate_limited'});
         return sendJson(res,200,service.validateManifest(await readJson(req)));
