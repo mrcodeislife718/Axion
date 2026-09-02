@@ -5,12 +5,13 @@ import { AxionStore } from './store.js';
 import { AxionKeyRing } from './signing.js';
 import { AxionTransparencyLedger } from './transparency-ledger.js';
 import { validateAxionPassportManifest, resolveCompatibility, fromA2AAgentCard, fromMcpServerJson } from './standard.js';
+import { createTrustBundle, verifyTrustBundle, trustBundleAllowsIdentity } from './trust-bundle.js';
 
 const mapEntries = map => [...map.entries()].map(([key, value]) => [key, structuredClone(value)]);
 const fromEntries = items => new Map((items || []).map(([key, value]) => [key, value]));
 
 export class AxionService {
-  constructor({ registry = new AxionRegistry(), store = new AxionStore(), keyRing = null, ledger = null, passportTtlMs = 15 * 60 * 1000 } = {}) {
+  constructor({ registry = new AxionRegistry(), store = new AxionStore(), keyRing = null, ledger = null, passportTtlMs = 15 * 60 * 1000, trustDomainId = process.env.AXION_TRUST_DOMAIN || 'axion:trust-domain:local', namespaceRoots = [] } = {}) {
     this.registry = registry;
     this.credentials = new AxionCredentialRegistry(registry);
     this.store = store;
@@ -18,6 +19,8 @@ export class AxionService {
     this.ledger = ledger || new AxionTransparencyLedger({ root:path.join(store.home,'transparency') });
     if (!Number.isFinite(passportTtlMs) || passportTtlMs < 30_000 || passportTtlMs > 86_400_000) throw new Error('passport TTL must be between 30 seconds and 24 hours');
     this.passportTtlMs = passportTtlMs;
+    this.trustDomainId = trustDomainId;
+    this.namespaceRoots = [...new Set(namespaceRoots.map(String))].sort();
   }
   initialize() {
     const state = this.store.loadSnapshot();
@@ -52,6 +55,9 @@ export class AxionService {
   translateA2A(card, options={}) { return fromA2AAgentCard(card,options); }
   translateMcp(server, options={}) { return fromMcpServerJson(server,options); }
   compatibility(left,right) { return resolveCompatibility(left,right); }
+  trustBundle(options={}) { return createTrustBundle({ domainId:this.trustDomainId, namespaceRoots:options.namespaceRoots || this.namespaceRoots, keyRing:this.keyRing, ledger:this.ledger, ttlMs:options.ttlMs, nowMs:options.nowMs }); }
+  verifyTrustBundle(bundle, policy={}) { return verifyTrustBundle(bundle, policy); }
+  trustBundleAllowsIdentity(bundle, identityId) { return trustBundleAllowsIdentity(bundle, identityId); }
 
   register(manifest, principal) {
     const conformance=validateAxionPassportManifest(manifest);
@@ -135,6 +141,7 @@ export class AxionService {
         totalCredentials: credentials.length,
         activeQualifications: activeQualifications.length,
         transparencyHead: ledgerHead.verified ? ledgerHead.headHash : null,
+        trustDomainId:this.trustDomainId,
       },
       providerSessions,
       qualifications,
@@ -155,7 +162,7 @@ export class AxionService {
   signingKeys() { return this.keyRing.publicKeys(); }
   ledgerStatus() { return this.ledger.verify(); }
   ledgerCheckpoint() { return this.ledger.checkpoint(this.keyRing); }
-  rotateSigningKey(reason, principal) { const key = this.keyRing.rotate({ reason }); this.store.audit(principal.organizationId, 'signing_key.rotated', principal.keyId, { keyId: key.keyId, reason }); this.ledger.append('signing_key.rotated','axion:trust-domain:local',{keyId:key.keyId,reason}); return key; }
-  revokeSigningKey(keyId, reason, principal, invalidAfter = null) { const key = this.keyRing.revoke(keyId, { reason, invalidAfter }); this.store.audit(principal.organizationId, 'signing_key.revoked', principal.keyId, { keyId, reason, invalidAfter: key.invalidAfter }); this.ledger.append('signing_key.revoked','axion:trust-domain:local',{keyId,reason,invalidAfter:key.invalidAfter}); return key; }
+  rotateSigningKey(reason, principal) { const key = this.keyRing.rotate({ reason }); this.store.audit(principal.organizationId, 'signing_key.rotated', principal.keyId, { keyId: key.keyId, reason }); this.ledger.append('signing_key.rotated',this.trustDomainId,{keyId:key.keyId,reason}); return key; }
+  revokeSigningKey(keyId, reason, principal, invalidAfter = null) { const key = this.keyRing.revoke(keyId, { reason, invalidAfter }); this.store.audit(principal.organizationId, 'signing_key.revoked', principal.keyId, { keyId, reason, invalidAfter: key.invalidAfter }); this.ledger.append('signing_key.revoked',this.trustDomainId,{keyId,reason,invalidAfter:key.invalidAfter}); return key; }
   close() { this.store.close(); }
 }
