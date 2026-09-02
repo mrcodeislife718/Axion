@@ -102,7 +102,7 @@ export class AxionService {
       identityId, organizationId: principal.organizationId, kind: input.kind, status: input.status, score: input.score ?? null,
       evidence: input.evidence || [], expiresAt: input.expiresAt || null,
       releaseVersion: inspected.release.version, releaseDigest: inspected.release.digest,
-      evaluatorId: evaluatorId || (input.status==='qualified' ? null : principal.keyId), methodology: input.methodology || null,
+      evaluatorId: evaluatorId || principal.keyId, methodology: input.methodology || null,
     });
     this.store.audit(principal.organizationId, 'qualification.recorded', principal.keyId, { identityId, qualificationId: result.id, kind: result.kind, status: result.status, releaseVersion:result.release_version, releaseDigest:result.release_digest, evaluatorId:result.evaluator_id });
     this.ledger.append('qualification.recorded',identityId,{qualificationId:result.id,kind:result.kind,status:result.status,releaseVersion:result.release_version,releaseDigest:result.release_digest,evaluatorId:result.evaluator_id,evidence:result.evidence});
