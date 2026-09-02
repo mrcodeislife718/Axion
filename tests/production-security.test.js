@@ -60,10 +60,11 @@ test('durable worker identity survives provider swaps and qualifications remain 
     assert.equal(passport.body.passport.identity.id,identity);
     assert.equal(passport.body.passport.providerSessions.length,2);
     assert.equal(passport.body.passport.trust.activeQualifications,1);
+    assert.ok(Date.parse(passport.body.passport.expiresAt)>Date.parse(passport.body.passport.issuedAt));
   } finally { await closeFixture(f); }
 });
 
-test('signed passports detect tampering and revoked keys stop verifying', async () => {
+test('signed passports support offline verification, safe rotation and compromise cutoffs', async () => {
   const f=await fixture();
   try {
     const boot=f.service.bootstrap('Signing Org');
@@ -71,14 +72,35 @@ test('signed passports detect tampering and revoked keys stop verifying', async 
     f.service.register(manifest('axion:agent:signed'),principal);
     const bundle=f.service.passport('axion:agent:signed',principal);
     assert.equal(bundle.verification.verified,true);
+    const publicKeys=f.service.signingKeys();
+    assert.equal(f.service.verifyPassport(bundle,{publicKeys}).verified,true);
     const tampered=structuredClone(bundle.passport); tampered.identity.status='revoked';
-    assert.equal(f.service.keyRing.verify(tampered,bundle.signature).verified,false);
+    assert.equal(AxionKeyRing.verifyOffline(tampered,bundle.signature,publicKeys).verified,false);
     const oldKey=bundle.signature.keyId;
     const rotated=f.service.rotateSigningKey('rotation',principal);
     assert.notEqual(rotated.keyId,oldKey);
     assert.equal(f.service.keyRing.verify(bundle.passport,bundle.signature).verified,true);
-    f.service.revokeSigningKey(oldKey,'compromised',principal);
-    assert.equal(f.service.keyRing.verify(bundle.passport,bundle.signature).verified,false);
+    f.service.revokeSigningKey(oldKey,'administrative retirement',principal);
+    assert.equal(f.service.keyRing.verify(bundle.passport,bundle.signature).verified,true);
+
+    const second=f.service.passport('axion:agent:signed',principal);
+    assert.equal(second.verification.verified,true);
+    f.service.revokeSigningKey(second.signature.keyId,'compromised',principal,second.signature.signedAt);
+    assert.equal(f.service.keyRing.verify(second.passport,second.signature).verified,false);
+  } finally { await closeFixture(f); }
+});
+
+test('passport expiry is enforced independently of signature validity', async () => {
+  const f=await fixture();
+  try {
+    const boot=f.service.bootstrap('Expiry Org');
+    const principal=f.store.authenticateApiKey(boot.apiKey);
+    f.service.register(manifest('axion:agent:expiring'),principal);
+    const bundle=f.service.passport('axion:agent:expiring',principal);
+    const afterExpiry=Date.parse(bundle.passport.expiresAt)+1;
+    const result=f.service.verifyPassport(bundle,{nowMs:afterExpiry,publicKeys:f.service.signingKeys()});
+    assert.equal(result.verified,false);
+    assert.equal(result.reason,'passport-expired');
   } finally { await closeFixture(f); }
 });
 
