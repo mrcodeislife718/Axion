@@ -8,11 +8,13 @@ const mapEntries = map => [...map.entries()].map(([key, value]) => [key, structu
 const fromEntries = items => new Map((items || []).map(([key, value]) => [key, value]));
 
 export class AxionService {
-  constructor({ registry = new AxionRegistry(), store = new AxionStore(), keyRing = null } = {}) {
+  constructor({ registry = new AxionRegistry(), store = new AxionStore(), keyRing = null, passportTtlMs = 15 * 60 * 1000 } = {}) {
     this.registry = registry;
     this.credentials = new AxionCredentialRegistry(registry);
     this.store = store;
     this.keyRing = keyRing || new AxionKeyRing({ root: path.join(store.home, 'signing') });
+    if (!Number.isFinite(passportTtlMs) || passportTtlMs < 30_000 || passportTtlMs > 86_400_000) throw new Error('passport TTL must be between 30 seconds and 24 hours');
+    this.passportTtlMs = passportTtlMs;
   }
   initialize() {
     const state = this.store.loadSnapshot();
@@ -90,8 +92,11 @@ export class AxionService {
     const providerSessions = owner ? this.store.providerSessions(identityId, owner) : [];
     const qualifications = owner ? this.store.qualifications(identityId, owner) : [];
     const activeQualifications = qualifications.filter(item => item.status === 'qualified' && !item.revoked_at && (!item.expires_at || Date.parse(item.expires_at) > Date.now()));
+    const issuedAt = new Date();
     const passport = {
-      axionPassportVersion: '1.0',
+      axionPassportVersion: '1.1',
+      issuedAt: issuedAt.toISOString(),
+      expiresAt: new Date(issuedAt.getTime() + this.passportTtlMs).toISOString(),
       identity: inspected.system,
       release: inspected.release,
       capabilityClaims: inspected.release.manifest.capabilities || [],
@@ -107,11 +112,19 @@ export class AxionService {
       credentials,
     };
     const signature = this.keyRing.sign(passport);
-    return { passport, signature, verification: this.keyRing.verify(passport, signature) };
+    return { passport, signature, verification: this.verifyPassport({ passport, signature }) };
   }
-  verifyPassport(bundle) { return this.keyRing.verify(bundle?.passport, bundle?.signature); }
+  verifyPassport(bundle, { nowMs = Date.now(), publicKeys = null } = {}) {
+    const passport = bundle?.passport;
+    if (!passport?.issuedAt || !passport?.expiresAt) return { verified: false, reason: 'passport-validity-missing' };
+    const issuedAt = Date.parse(passport.issuedAt), expiresAt = Date.parse(passport.expiresAt);
+    if (!Number.isFinite(issuedAt) || !Number.isFinite(expiresAt) || expiresAt <= issuedAt) return { verified: false, reason: 'passport-validity-invalid' };
+    if (nowMs < issuedAt - 60_000) return { verified: false, reason: 'passport-not-yet-valid' };
+    if (nowMs >= expiresAt) return { verified: false, reason: 'passport-expired' };
+    return publicKeys ? AxionKeyRing.verifyOffline(passport, bundle.signature, publicKeys) : this.keyRing.verify(passport, bundle.signature);
+  }
   signingKeys() { return this.keyRing.publicKeys(); }
   rotateSigningKey(reason, principal) { const key = this.keyRing.rotate({ reason }); this.store.audit(principal.organizationId, 'signing_key.rotated', principal.keyId, { keyId: key.keyId, reason }); return key; }
-  revokeSigningKey(keyId, reason, principal) { const key = this.keyRing.revoke(keyId, { reason }); this.store.audit(principal.organizationId, 'signing_key.revoked', principal.keyId, { keyId, reason }); return key; }
+  revokeSigningKey(keyId, reason, principal, invalidAfter = null) { const key = this.keyRing.revoke(keyId, { reason, invalidAfter }); this.store.audit(principal.organizationId, 'signing_key.revoked', principal.keyId, { keyId, reason, invalidAfter: key.invalidAfter }); return key; }
   close() { this.store.close(); }
 }
