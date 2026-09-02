@@ -11,8 +11,25 @@ export function createAxionHandler({ service = new AxionService().initialize(), 
   return async function handler(req, res) {
     const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
     try {
-      if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, service: 'axion' });
+      if (req.method === 'GET' && url.pathname === '/health') return sendJson(res, 200, { ok: true, service: 'axion', ledger:service.ledgerStatus() });
       if (req.method === 'GET' && url.pathname === '/v1/public/keys') return sendJson(res, 200, { keys: service.signingKeys() });
+      if (req.method === 'GET' && url.pathname === '/v1/public/transparency/checkpoint') return sendJson(res, 200, service.ledgerCheckpoint());
+      if (req.method === 'POST' && url.pathname === '/v1/public/conformance/validate') {
+        const limit=publicRateLimiter.check(ip(req)); if(!limit.allowed)return sendJson(res,429,{error:'rate_limited'});
+        return sendJson(res,200,service.validateManifest(await readJson(req)));
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/public/compatibility/resolve') {
+        const limit=publicRateLimiter.check(ip(req)); if(!limit.allowed)return sendJson(res,429,{error:'rate_limited'});
+        const body=await readJson(req); return sendJson(res,200,service.compatibility(body.left,body.right));
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/public/translate/a2a') {
+        const limit=publicRateLimiter.check(ip(req)); if(!limit.allowed)return sendJson(res,429,{error:'rate_limited'});
+        const body=await readJson(req); return sendJson(res,200,service.translateA2A(body.card,body.options||{}));
+      }
+      if (req.method === 'POST' && url.pathname === '/v1/public/translate/mcp') {
+        const limit=publicRateLimiter.check(ip(req)); if(!limit.allowed)return sendJson(res,429,{error:'rate_limited'});
+        const body=await readJson(req); return sendJson(res,200,service.translateMcp(body.server,body.options||{}));
+      }
       let match;
       if ((match = url.pathname.match(/^\/v1\/public\/identities\/([^/]+)\/passport$/)) && req.method === 'GET') {
         const limit = publicRateLimiter.check(ip(req)); if (!limit.allowed) return sendJson(res, 429, { error: 'rate_limited' });
@@ -56,7 +73,7 @@ export function createAxionHandler({ service = new AxionService().initialize(), 
       if (req.method==='POST' && url.pathname==='/v1/api-keys') { const p=requireScope('admin:keys'); if(!p)return; const body=await readJson(req); return sendJson(res,201,service.store.issueApiKey({ organizationId:p.organizationId,label:body.label,scopes:body.scopes })); }
       if ((match=url.pathname.match(/^\/v1\/api-keys\/([^/]+)\/revoke$/)) && req.method==='POST') { const p=requireScope('admin:keys'); if(!p)return; service.store.revokeApiKey(decodeURIComponent(match[1]),p.organizationId); return sendJson(res,200,{revoked:true}); }
       if (req.method==='POST' && url.pathname==='/v1/signing/rotate') { const p=requireScope('admin:signing'); if(!p)return; const body=await readJson(req); return sendJson(res,201,service.rotateSigningKey(body.reason||'operator_rotation',p)); }
-      if ((match=url.pathname.match(/^\/v1\/signing\/([^/]+)\/revoke$/)) && req.method==='POST') { const p=requireScope('admin:signing'); if(!p)return; const body=await readJson(req); return sendJson(res,200,service.revokeSigningKey(decodeURIComponent(match[1]),body.reason||'operator_revocation',p)); }
+      if ((match=url.pathname.match(/^\/v1\/signing\/([^/]+)\/revoke$/)) && req.method==='POST') { const p=requireScope('admin:signing'); if(!p)return; const body=await readJson(req); return sendJson(res,200,service.revokeSigningKey(decodeURIComponent(match[1]),body.reason||'operator_revocation',p,body.invalidAfter||null)); }
       return sendJson(res,404,{error:'not_found'});
     } catch (error) {
       const message=error?.message||'request_failed';
