@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Axion Registry</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <header>
+      <div><p class="eyebrow">Axion</p><h1>AI identity registry</h1><p>Register, inspect, verify, credential, and govern AI systems.</p></div>
+      <button id="refresh">Refresh</button>
+    </header>
+    <section id="metrics" class="metrics"></section>
+    <section class="grid">
+      <article>
+        <h2>Register identity</h2>
+        <form id="identity-form">
+          <input name="id" placeholder="axion:agent:example" required>
+          <input name="name" placeholder="System name" required>
+          <input name="version" placeholder="1.0.0" value="1.0.0" required>
+          <input name="publisher" placeholder="Publisher" required>
+          <select name="type"><option>agent</option><option>runtime</option><option>orchestrator</option><option>tool</option><option>model-integration</option><option>governance</option></select>
+          <input name="capabilities" placeholder="search,code,planning">
+          <button>Register</button>
+        </form>
+      </article>
+      <article><h2>Registered identities</h2><div id="identities"></div></article>
+    </section>
+    <section class="grid">
+      <article>
+        <h2>Issue credential</h2>
+        <form id="credential-form">
+          <input name="subjectId" placeholder="Subject identity ID" required>
+          <input name="issuerId" placeholder="Issuer ID" required>
+          <input name="claim" placeholder="Claim name" required>
+          <input name="value" placeholder="Claim value" required>
+          <button>Issue credential</button>
+        </form>
+      </article>
+      <article><h2>Credentials</h2><div id="credentials"></div></article>
+    </section>
+    <section><h2>Audit history</h2><div id="audit"></div></section>
+  </main>
+  <script type="module" src="/app.js"></script>
+</body>
+</html>
