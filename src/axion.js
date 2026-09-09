@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 
-const REQUIRED_TYPES = new Set(['agent','mcp-server','runtime','orchestrator','memory','tool','model-integration','observability','evaluation','governance']);
+const REQUIRED_TYPES = new Set(['human','organization','service','agent','agent-execution','device','robot','model','mcp-server','runtime','orchestrator','memory','tool','model-integration','observability','evaluation','governance']);
 
 export function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize);
@@ -22,6 +22,7 @@ export function validateManifest(manifest) {
   if (!/^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$/.test(identity.version ?? '')) errors.push('identity.version must be semantic');
   if (!identity.publisher?.trim()) errors.push('identity.publisher is required');
   if (!REQUIRED_TYPES.has(identity.type)) errors.push('identity.type is unsupported');
+  if (identity.type === 'agent-execution' && !identity.parent_agent_id) errors.push('agent-execution requires identity.parent_agent_id');
   if (manifest.capabilities != null && !Array.isArray(manifest.capabilities)) errors.push('capabilities must be an array');
   if (manifest.permissions != null && !Array.isArray(manifest.permissions)) errors.push('permissions must be an array');
   return { valid: errors.length === 0, errors };
@@ -50,9 +51,10 @@ export class AxionRegistry {
     if (!system.releases.includes(canonical.identity.version)) system.releases.push(canonical.identity.version);
     system.currentVersion = canonical.identity.version;
     system.currentDigest = digest;
+    system.parentAgentId = canonical.identity.parent_agent_id ?? system.parentAgentId ?? null;
     system.updatedAt = this.now();
     this.systems.set(id, system);
-    this.#audit('release.registered', id, { version: record.version, digest });
+    this.#audit('release.registered', id, { version: record.version, digest, type: system.type, parentAgentId: system.parentAgentId });
     return structuredClone(record);
   }
 
@@ -94,3 +96,5 @@ export class AxionRegistry {
     this.audit.push({ id: randomUUID(), type, identityId, at: this.now(), payload: structuredClone(payload) });
   }
 }
+
+export { AgentAuthorityLedger } from './agent-authority.js';
