@@ -90,6 +90,15 @@ function createRateLimiter({ windowMs, max }) {
   };
 }
 
+function isPublicApi(req, url) {
+  if (req.method === 'GET' && /^\/api\/identities\/[^/]+$/.test(url.pathname)) return true;
+  if (req.method === 'GET' && /^\/api\/identities\/[^/]+\/passport$/.test(url.pathname)) return true;
+  if (req.method === 'GET' && /^\/api\/credentials\/[^/]+\/verify$/.test(url.pathname)) return true;
+  if (req.method === 'GET' && ['/api/trust/keys','/api/trust/checkpoint','/api/trust/bundle'].includes(url.pathname)) return true;
+  if (req.method === 'POST' && ['/api/trust/bundle/verify','/api/passports/verify','/api/conformance/validate','/api/compatibility/resolve','/api/translate/a2a','/api/translate/mcp'].includes(url.pathname)) return true;
+  return false;
+}
+
 export async function createAxionHandler({
   service = new AxionService(),
   authorityKey = process.env.AXION_AUTHORITY_KEY ?? '',
@@ -118,13 +127,42 @@ export async function createAxionHandler({
         if (!rate.allowed) return sendJson(res, 429, { error: 'rate_limited', requestId: id });
       }
 
-      const publicIdentity = url.pathname.match(/^\/api\/identities\/([^/]+)$/);
-      const publicCredentialVerification = url.pathname.match(/^\/api\/credentials\/([^/]+)\/verify$/);
-      const publicRead = (req.method === 'GET' && Boolean(publicIdentity || publicCredentialVerification));
-      const protectedSurface = url.pathname === '/api/dashboard' || (url.pathname.startsWith('/api/') && !publicRead);
+      const publicSurface = isPublicApi(req, url);
+      const protectedSurface = url.pathname === '/api/dashboard' || (url.pathname.startsWith('/api/') && !publicSurface);
       if (protectedSurface && (requireAuthority || authorityKey) && !secureEqual(suppliedAuthority(req), authorityKey)) {
         res.setHeader('www-authenticate', 'Bearer realm="Axion Registry Authority"');
         return sendJson(res, 401, { error: 'registry_authority_required', requestId: id });
+      }
+
+      const publicIdentity = url.pathname.match(/^\/api\/identities\/([^/]+)$/);
+      const publicPassport = url.pathname.match(/^\/api\/identities\/([^/]+)\/passport$/);
+      const publicCredentialVerification = url.pathname.match(/^\/api\/credentials\/([^/]+)\/verify$/);
+      let match;
+
+      if (req.method === 'GET' && url.pathname === '/api/trust/keys') return sendJson(res, 200, { keys: service.signingKeys() });
+      if (req.method === 'GET' && url.pathname === '/api/trust/checkpoint') return sendJson(res, 200, service.ledgerCheckpoint());
+      if (req.method === 'GET' && url.pathname === '/api/trust/bundle') return sendJson(res, 200, service.trustBundle());
+      if (req.method === 'POST' && url.pathname === '/api/trust/bundle/verify') {
+        const input = await readJson(req);
+        return sendJson(res, 200, service.verifyTrustBundle(input.bundle ?? input, input.policy ?? {}));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/passports/verify') return sendJson(res, 200, service.verifyPassport(await readJson(req)));
+      if (req.method === 'POST' && url.pathname === '/api/conformance/validate') return sendJson(res, 200, service.validateManifest(await readJson(req)));
+      if (req.method === 'POST' && url.pathname === '/api/compatibility/resolve') {
+        const input = await readJson(req);
+        return sendJson(res, 200, service.compatibility(input.left, input.right));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/translate/a2a') {
+        const input = await readJson(req);
+        return sendJson(res, 200, service.translateA2A(input.card, input.options ?? {}));
+      }
+      if (req.method === 'POST' && url.pathname === '/api/translate/mcp') {
+        const input = await readJson(req);
+        return sendJson(res, 200, service.translateMcp(input.server, input.options ?? {}));
+      }
+      if (publicPassport && req.method === 'GET') {
+        const bundle = service.passport(decodeURIComponent(publicPassport[1]));
+        return bundle ? sendJson(res, 200, bundle) : sendJson(res, 404, { error: 'not_found', requestId: id });
       }
 
       if (req.method === 'GET' && url.pathname === '/api/dashboard') return sendJson(res, 200, service.dashboard());
@@ -139,10 +177,21 @@ export async function createAxionHandler({
         if (typeof input.status !== 'string' || !input.status) throw Object.assign(new Error('status is required'), { statusCode: 400 });
         return sendJson(res, 200, await service.setLifecycle(decodeURIComponent(lifecycle[1]), input.status));
       }
+      if ((match = url.pathname.match(/^\/api\/identities\/([^/]+)\/provider-sessions$/)) && req.method === 'POST') return sendJson(res, 201, await service.bindProviderSession(decodeURIComponent(match[1]), await readJson(req)));
+      if ((match = url.pathname.match(/^\/api\/identities\/([^/]+)\/qualifications$/)) && req.method === 'POST') return sendJson(res, 201, await service.recordQualification(decodeURIComponent(match[1]), await readJson(req)));
+      if ((match = url.pathname.match(/^\/api\/identities\/([^/]+)\/qualifications\/([^/]+)\/revoke$/)) && req.method === 'POST') return sendJson(res, 200, await service.revokeQualification(decodeURIComponent(match[1]), decodeURIComponent(match[2])));
       if (req.method === 'POST' && url.pathname === '/api/credentials') return sendJson(res, 201, await service.issueCredential(await readJson(req)));
       if (publicCredentialVerification && req.method === 'GET') return sendJson(res, 200, service.verifyCredential(decodeURIComponent(publicCredentialVerification[1])));
       const revokeCredential = url.pathname.match(/^\/api\/credentials\/([^/]+)\/revoke$/);
       if (revokeCredential && req.method === 'POST') return sendJson(res, 200, await service.revokeCredential(decodeURIComponent(revokeCredential[1]), await readJson(req)));
+      if (req.method === 'POST' && url.pathname === '/api/signing/rotate') {
+        const input = await readJson(req);
+        return sendJson(res, 201, service.rotateSigningKey(input.reason ?? 'operator_rotation'));
+      }
+      if ((match = url.pathname.match(/^\/api\/signing\/([^/]+)\/revoke$/)) && req.method === 'POST') {
+        const input = await readJson(req);
+        return sendJson(res, 200, service.revokeSigningKey(decodeURIComponent(match[1]), input.reason ?? 'operator_revocation', input.invalidAfter ?? null));
+      }
       if (req.method === 'GET' && !url.pathname.startsWith('/api/') && await servePublic(url.pathname, res)) return;
       return sendJson(res, 404, { error: 'not_found', requestId: id });
     } catch (error) {
