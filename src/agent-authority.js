@@ -36,8 +36,8 @@ export class AgentAuthorityLedger {
     const from = this.#active(fromId);
     const to = this.#active(toId);
     const effectiveCapabilities = intersect(unique(capabilities), from.capabilities);
-    const effectiveResources = intersect(unique(resourceScopes), from.resourceScopes);
-    const effectiveCredentials = intersect(unique(credentialScopes), from.credentialScopes);
+    const effectiveResources = narrowerScopes(unique(resourceScopes), from.resourceScopes);
+    const effectiveCredentials = narrowerScopes(unique(credentialScopes), from.credentialScopes);
     const requestedQuotas = normalizeQuotas(quotas);
     const effectiveQuotas = capQuotas(requestedQuotas, from.quotas);
     const delegation = Object.freeze({
@@ -100,6 +100,7 @@ export class AgentAuthorityLedger {
 
 function unique(values) { return [...new Set((values ?? []).filter((value) => typeof value === 'string' && value))]; }
 function intersect(a, b) { const allowed = new Set(b); return a.filter((value) => allowed.has(value)); }
+function narrowerScopes(requested, parentScopes) { return requested.filter((scope) => matchesAny(scope, parentScopes)); }
 function normalizeExpiry(value) { if (value == null) return null; const n = Number(value); if (!Number.isFinite(n)) throw new TypeError('invalid expiry'); return n; }
 function earliestExpiry(...values) { const finite = values.filter((value) => value != null); return finite.length ? Math.min(...finite) : null; }
 function normalizeQuotas(quotas) { const out = {}; for (const [key, value] of Object.entries(quotas ?? {})) { const n = Number(value); if (!Number.isFinite(n) || n < 0) throw new TypeError(`invalid quota ${key}`); out[key] = n; } return out; }
